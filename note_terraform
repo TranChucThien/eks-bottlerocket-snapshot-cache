@@ -1,0 +1,93 @@
+Chuẩn bị
+Đặt các biến môi trường:
+
+export AWS_DEFAULT_REGION="ap-southeast-1"
+IMAGES="public.ecr.aws/eks-distro/kubernetes/pause:3.2"
+CTR_CMD="apiclient exec admin sheltie ctr -a /run/containerd/containerd.sock -n k8s.io"
+export AWS_PAGER=""
+
+Các bước thực hiện
+Bước 1: Deploy EC2 instance qua Terraform
+
+cd terraform
+terraform init
+terraform apply
+
+INSTANCE_ID=$(terraform output -raw ec2_instance_id)
+
+Bước 2: Đợi SSM sẵn sàng
+
+aws ssm describe-instance-information \
+    --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+    --query "InstanceInformationList[0].PingStatus"
+# Chờ đến khi trả về "Online"
+
+Bước 3: Dừng kubelet service
+
+CMDID=$(aws ssm send-command --instance-ids $INSTANCE_ID \
+    --document-name "AWS-RunShellScript" \
+    --parameters commands="apiclient exec admin sheltie systemctl stop kubelet" \
+    --query "Command.CommandId" --output text)
+
+aws ssm wait command-executed --command-id "$CMDID" --instance-id $INSTANCE_ID
+
+Bước 4: Xóa các images hiện có
+
+CMDID=$(aws ssm send-command --instance-ids $INSTANCE_ID \
+    --document-name "AWS-RunShellScript" \
+    --parameters commands="$CTR_CMD images rm \$($CTR_CMD images ls -q)" \
+    --query "Command.CommandId" --output text)
+
+aws ssm wait command-executed --command-id "$CMDID" --instance-id $INSTANCE_ID
+
+Bước 5: Pull container images (cho cả amd64 và arm64)
+
+CMDID=$(aws ssm send-command --instance-ids $INSTANCE_ID \
+    --document-name "AWS-RunShellScript" \
+    --parameters commands="$CTR_CMD images pull --platform amd64 $IMAGES" \
+    --query "Command.CommandId" --output text)
+aws ssm wait command-executed --command-id "$CMDID" --instance-id $INSTANCE_ID
+
+CMDID=$(aws ssm send-command --instance-ids $INSTANCE_ID \
+    --document-name "AWS-RunShellScript" \
+    --parameters commands="$CTR_CMD images pull --platform arm64 $IMAGES" \
+    --query "Command.CommandId" --output text)
+aws ssm wait command-executed --command-id "$CMDID" --instance-id $INSTANCE_ID
+
+Bước 6: Dừng EC2 instance
+
+aws ec2 stop-instances --instance-ids $INSTANCE_ID
+aws ec2 wait instance-stopped --instance-ids "$INSTANCE_ID"
+
+Bước 7: Tạo EBS snapshot
+
+DATA_VOLUME_ID=$(aws ec2 describe-instances --instance-id $INSTANCE_ID \
+    --query "Reservations[0].Instances[0].BlockDeviceMappings[?DeviceName=='/dev/xvdb'].Ebs.VolumeId" \
+    --output text)
+
+SNAPSHOT_ID=$(aws ec2 create-snapshot --volume-id $DATA_VOLUME_ID \
+    --description "Bottlerocket Data Volume snapshot" \
+    --query "SnapshotId" --output text)
+
+aws ec2 wait snapshot-completed --snapshot-ids "$SNAPSHOT_ID"
+echo "Snapshot ID: $SNAPSHOT_ID"
+
+Bước 8: Dọn dẹp
+
+cd terraform
+terraform destroy --auto-approve
+
+Kết quả cuối cùng là bạn sẽ có SNAPSHOT_ID để sử dụng trong cluster.
+
+
+# Debug: Liệt kê tất cả images
+CMDID=$(aws ssm send-command --instance-ids $INSTANCE_ID \
+    --document-name "AWS-RunShellScript" \
+    --parameters commands="$CTR_CMD images ls" \
+    --query "Command.CommandId" --output text)
+
+aws ssm get-command-invocation \
+    --command-id "$CMDID" \
+    --instance-id $INSTANCE_ID \
+    --query "StandardOutputContent" \
+    --output text

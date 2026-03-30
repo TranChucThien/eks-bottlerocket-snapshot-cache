@@ -1,0 +1,19 @@
+# Copy file này thành terraform.tfvars và điền giá trị phù hợp
+# cp terraform.tfvars.example terraform.tfvars
+
+name          = "bottlerocket-snapshot"
+# ami_id      = ""  # Để trống sẽ tự lấy từ SSM parameter
+instance_type = "t2.small"
+subnet_id     = "subnet-xxxxxxxxxxxxxxxxx"
+
+# additional_iam_policies = []
+
+# user_data = <<-EOT
+#   [settings.host-containers.admin]
+#   enabled = true
+# EOT
+
+tags = {
+  Environment = "dev"
+  Project     = "eks-bottlerocket"
+}

@@ -1,0 +1,116 @@
+name: Create Bottlerocket EBS Snapshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      aws_region:
+        description: 'AWS Region'
+        required: true
+        default: 'ap-northeast-1'
+      environment:
+        description: 'Environment (dev/staging/prod)'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      container_images:
+        description: 'Container images (comma-separated)'
+        required: true
+        default: 'public.ecr.aws/eks-distro/kubernetes/pause:3.2'
+      instance_type:
+        description: 'EC2 instance type'
+        required: false
+        default: 't2.small'
+      vpc_cidr:
+        description: 'VPC CIDR'
+        required: false
+        default: '10.0.0.0/16'
+
+permissions:
+  contents: write
+
+jobs:
+  create-snapshot:
+    runs-on: ubuntu-latest
+    outputs:
+      snapshot_id: ${{ steps.snapshot.outputs.snapshot_id }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Generate tfvars
+        working-directory: terraform
+        run: |
+          AZ="${{ inputs.aws_region }}a"
+          cat > terraform.tfvars <<EOF
+          aws_region           = "${{ inputs.aws_region }}"
+          project_name         = "eks-bottlerocket"
+          environment          = "${{ inputs.environment }}"
+          vpc_cidr             = "${{ inputs.vpc_cidr }}"
+          azs                  = ["${AZ}"]
+          public_subnet_cidrs  = ["10.0.1.0/24"]
+          private_subnet_cidrs = []
+          instance_type        = "${{ inputs.instance_type }}"
+          container_images     = "${{ inputs.container_images }}"
+          tags = {
+            system       = "k+"
+            map-migrated = "migDTX1AI6YIC"
+          }
+          EOF
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: |
+          terraform init
+          terraform apply -auto-approve
+
+      - name: Get Snapshot ID
+        id: snapshot
+        working-directory: terraform
+        run: |
+          SNAPSHOT_ID=$(terraform output -raw snapshot_id)
+          echo "snapshot_id=$SNAPSHOT_ID" >> "$GITHUB_OUTPUT"
+          echo "### Snapshot Created :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Region: \`${{ inputs.aws_region }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Snapshot: \`$SNAPSHOT_ID\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Images: \`${{ inputs.container_images }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform Destroy
+        if: always()
+        working-directory: terraform
+        run: terraform destroy -auto-approve
+
+  update-config:
+    needs: create-snapshot
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update eks-clusterconfig.yaml
+        run: |
+          SNAPSHOT_ID="${{ needs.create-snapshot.outputs.snapshot_id }}"
+          sed -i "s|snapshotID: snap-.*|snapshotID: ${SNAPSHOT_ID}|" eks-clusterconfig.yaml
+          echo "Updated snapshotID to: $SNAPSHOT_ID"
+          cat eks-clusterconfig.yaml
+
+      - name: Commit & Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add eks-clusterconfig.yaml
+          git diff --cached --quiet || git commit -m "chore: update snapshotID to ${{ needs.create-snapshot.outputs.snapshot_id }}"
+          git push
