@@ -1,0 +1,38 @@
+---
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: bottlerocket-cache-cluster
+  region: ap-northeast-1
+  version: '1.33'
+
+iam:
+  withOIDC: true
+
+managedNodeGroups:
+  - name: no-prefetch-mng
+    instanceType: t3.medium
+    desiredCapacity: 1
+    minSize: 1
+    maxSize: 2
+    privateNetworking: true
+    amiFamily: Bottlerocket
+    tags:
+      system: k+
+      map-migrated: migDTX1AI6YIC
+    
+  - name: prefetch-mng
+    instanceType: t3.medium
+    desiredCapacity: 1
+    minSize: 1
+    maxSize: 2
+    privateNetworking: true
+    amiFamily: Bottlerocket
+    tags:
+      system: k+
+      map-migrated: migDTX1AI6YIC
+    additionalVolumes:
+      - volumeName: '/dev/xvda' # OS Volume
+      - volumeName: '/dev/xvdb'  # Data Volume
+        snapshotID: snap-00c74b50f2d30266d

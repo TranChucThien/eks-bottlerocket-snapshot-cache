@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inflate-no-prefetch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inflate-no-prefetch
+  template:
+    metadata:
+      labels:
+        app: inflate-no-prefetch
+    spec:
+      terminationGracePeriodSeconds: 0
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                - key: "alpha.eksctl.io/nodegroup-name"
+                  operator: "In"
+                  values: ["no-prefetch-mng"]
+      containers:
+        - name: inflate-amazon-linux
+          image: chucthien03/klb-profile-hub:v1 
+          resources:
+            requests:
+              cpu: 1
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inflate-prefetch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inflate-prefetch
+  template:
+    metadata:
+      labels:
+        app: inflate-prefetch
+    spec:
+      terminationGracePeriodSeconds: 0
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                - key: "alpha.eksctl.io/nodegroup-name"
+                  operator: "In"
+                  values: ["prefetch-mng"]
+      containers:
+        - name: inflate-bottlerocket
+          image: chucthien03/klb-profile-hub:v1 
+          resources:
+            requests:
+              cpu: 1
