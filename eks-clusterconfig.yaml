@@ -35,4 +35,4 @@ managedNodeGroups:
     additionalVolumes:
       - volumeName: '/dev/xvda' # OS Volume
       - volumeName: '/dev/xvdb'  # Data Volume
-        snapshotID: snap-095b3a01738bcedfe
+        snapshotID: snap-094e93bb5d3c594e4
