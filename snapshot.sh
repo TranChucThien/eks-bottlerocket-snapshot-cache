@@ -7,7 +7,8 @@ function print_help {
     echo "Options:"
     echo "-h,--help print this help"
     echo "-r,--region Set AWS region to build the EBS snapshot, (default: use environment variable of AWS_DEFAULT_REGION)"
-    echo "-a,--ami Set SSM Parameter path for Bottlerocket ID, (default: /aws/service/bottlerocket/aws-k8s-1.21/x86_64/latest/image_id)"
+    echo "-k,--k8s-version Set Kubernetes version for Bottlerocket AMI, (default: 1.33)"
+    echo "-a,--ami Set SSM Parameter path for Bottlerocket ID, (default: derived from k8s version)"
     echo "-i,--instance-type Set EC2 instance type to build this snapshot, (default: t2.small)"
 }
 
@@ -20,6 +21,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         -r|--region)
             AWS_DEFAULT_REGION=$2
+            shift
+            shift
+            ;;
+        -k|--k8s-version)
+            K8S_VERSION=$2
             shift
             shift
             ;;
@@ -46,7 +52,8 @@ IMAGES="$1"
 set -u
 
 AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-}
-AMI_ID=${AMI_ID:-/aws/service/bottlerocket/aws-k8s-1.24/x86_64/latest/image_id}
+K8S_VERSION=${K8S_VERSION:-1.33}
+AMI_ID=${AMI_ID:-/aws/service/bottlerocket/aws-k8s-${K8S_VERSION}/x86_64/latest/image_id}
 INSTANCE_TYPE=${INSTANCE_TYPE:-t2.small}
 CTR_CMD="apiclient exec admin sheltie ctr -a /run/containerd/containerd.sock -n k8s.io"
 
