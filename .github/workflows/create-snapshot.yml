@@ -44,12 +44,21 @@ jobs:
       - name: Configure AWS Credentials
         run: |
           mkdir -p ~/.aws
-          cat > ~/.aws/credentials <<EOF
-          ${{ secrets.AWS_CREDENTIALS }}
-          EOF
-          sed -i 's/^          //' ~/.aws/credentials
-          echo "[default]" > ~/.aws/config
-          echo "region = ${{ inputs.aws_region }}" >> ~/.aws/config
+          echo '${{ secrets.AWS_CREDENTIALS }}' > ~/.aws/credentials
+          printf '[default]\nregion = ${{ inputs.aws_region }}\n' > ~/.aws/config
+
+      - name: Cleanup stale IAM resources
+        run: |
+          ROLE_NAME="eks-bottlerocket-${{ inputs.environment }}-bottlerocket-role"
+          PROFILE_NAME="eks-bottlerocket-${{ inputs.environment }}-bottlerocket-profile"
+          # Remove role from instance profile & delete profile
+          aws iam remove-role-from-instance-profile --instance-profile-name "$PROFILE_NAME" --role-name "$ROLE_NAME" 2>/dev/null || true
+          aws iam delete-instance-profile --instance-profile-name "$PROFILE_NAME" 2>/dev/null || true
+          # Detach policies & delete role
+          for ARN in $(aws iam list-attached-role-policies --role-name "$ROLE_NAME" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
+            aws iam detach-role-policy --role-name "$ROLE_NAME" --policy-arn "$ARN"
+          done
+          aws iam delete-role --role-name "$ROLE_NAME" 2>/dev/null || true
 
       - uses: hashicorp/setup-terraform@v3
         with:

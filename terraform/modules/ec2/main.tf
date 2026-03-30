@@ -63,7 +63,7 @@ resource "aws_instance" "this" {
   instance_type        = var.instance_type
   subnet_id            = var.subnet_id
   iam_instance_profile = aws_iam_instance_profile.this.name
-  user_data            = base64encode(var.user_data)
+  user_data_base64     = base64encode(var.user_data)
 
   tags = merge(var.tags, {
     Name = var.name
