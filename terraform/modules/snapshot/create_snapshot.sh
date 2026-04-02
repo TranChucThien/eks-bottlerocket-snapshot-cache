@@ -12,11 +12,24 @@ export AWS_PAGER=""
 
 ssm_run() {
   local cmd="$1"
+  local allow_fail="${2:-false}"
   CMDID=$(aws ssm send-command --instance-ids "$INSTANCE_ID" \
     --document-name "AWS-RunShellScript" \
-    --parameters commands="$cmd" \
+    --parameters "commands=[\"$cmd\"]" \
     --query "Command.CommandId" --output text)
-  aws ssm wait command-executed --command-id "$CMDID" --instance-id "$INSTANCE_ID"
+  aws ssm wait command-executed --command-id "$CMDID" --instance-id "$INSTANCE_ID" 2>/dev/null || true
+  local status
+  status=$(aws ssm get-command-invocation --command-id "$CMDID" --instance-id "$INSTANCE_ID" --query "Status" --output text)
+  if [ "$status" != "Success" ]; then
+    local err
+    err=$(aws ssm get-command-invocation --command-id "$CMDID" --instance-id "$INSTANCE_ID" --query "StandardErrorContent" --output text)
+    if [ "$allow_fail" = "true" ]; then
+      echo "    [SKIP] $err"
+      return 1
+    fi
+    echo "Error: SSM command failed: $err" >&2
+    exit 1
+  fi
 }
 
 # 1. Wait SSM ready
@@ -46,10 +59,17 @@ for IMG in "${IMG_LIST[@]}"; do
   ECR_REGION=$(echo "$IMG" | sed -n 's/^[0-9]*\.dkr\.ecr\.\([a-z1-9-]*\)\.amazonaws\.com.*$/\1/p')
   ECRPWD=""
   [ -n "$ECR_REGION" ] && ECRPWD="--u AWS:$(aws ecr get-login-password --region $ECR_REGION)"
+  PULLED=false
   for PLATFORM in amd64 arm64; do
     echo "  $IMG ($PLATFORM)..."
-    ssm_run "$CTR_CMD images pull --platform $PLATFORM $IMG $ECRPWD"
+    if ssm_run "$CTR_CMD images pull --platform $PLATFORM $IMG $ECRPWD" true; then
+      PULLED=true
+    fi
   done
+  if [ "$PULLED" = "false" ]; then
+    echo "Error: Failed to pull $IMG for any platform" >&2
+    exit 1
+  fi
 done
 
 # 5. Stop instance
