@@ -47,20 +47,8 @@ jobs:
           echo '${{ secrets.AWS_CREDENTIALS }}' > ~/.aws/credentials
           printf '[default]\nregion = ${{ inputs.aws_region }}\n' > ~/.aws/config
 
-      - name: Cleanup stale IAM resources
-        run: |
-          ROLE_NAME="eks-bottlerocket-${{ inputs.environment }}-bottlerocket-role"
-          PROFILE_NAME="eks-bottlerocket-${{ inputs.environment }}-bottlerocket-profile"
-          # Remove role from instance profile & delete profile
-          aws iam remove-role-from-instance-profile --instance-profile-name "$PROFILE_NAME" --role-name "$ROLE_NAME" 2>/dev/null || true
-          aws iam delete-instance-profile --instance-profile-name "$PROFILE_NAME" 2>/dev/null || true
-          # Detach policies & delete role
-          for ARN in $(aws iam list-attached-role-policies --role-name "$ROLE_NAME" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
-            aws iam detach-role-policy --role-name "$ROLE_NAME" --policy-arn "$ARN"
-          done
-          aws iam delete-role --role-name "$ROLE_NAME" 2>/dev/null || true
-
-      - uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
 
@@ -96,34 +84,69 @@ jobs:
         run: |
           SNAPSHOT_ID=$(terraform output -raw snapshot_id)
           echo "snapshot_id=$SNAPSHOT_ID" >> "$GITHUB_OUTPUT"
-          echo "### Snapshot Created :rocket:" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Snapshot Created 🚀" >> "$GITHUB_STEP_SUMMARY"
           echo "- Region: \`${{ inputs.aws_region }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Snapshot: \`$SNAPSHOT_ID\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Images: \`${{ inputs.container_images }}\`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Terraform Destroy
-        if: always()
-        working-directory: terraform
-        run: terraform destroy -auto-approve
+      # 🔥 Upload state để job sau dùng
+      - name: Upload Terraform state
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfstate
+          path: |
+            terraform/terraform.tfstate
+            terraform/terraform.tfstate.backup
 
-  update-config:
+
+  destroy-infra:
     needs: create-snapshot
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Update eks-clusterconfig.yaml
+      - name: Configure AWS Credentials
         run: |
-          SNAPSHOT_ID="${{ needs.create-snapshot.outputs.snapshot_id }}"
-          sed -i "s|snapshotID: snap-.*|snapshotID: ${SNAPSHOT_ID}|" eks-clusterconfig.yaml
-          echo "Updated snapshotID to: $SNAPSHOT_ID"
-          cat eks-clusterconfig.yaml
+          mkdir -p ~/.aws
+          echo '${{ secrets.AWS_CREDENTIALS }}' > ~/.aws/credentials
+          printf '[default]\nregion = ${{ inputs.aws_region }}\n' > ~/.aws/config
 
-      - name: Commit & Push
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      # 🔥 Download lại state
+      - name: Download Terraform state
+        uses: actions/download-artifact@v4
+        with:
+          name: tfstate
+          path: terraform/
+
+      - name: Recreate tfvars
+        working-directory: terraform
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add eks-clusterconfig.yaml
-          git diff --cached --quiet || git commit -m "chore: update snapshotID to ${{ needs.create-snapshot.outputs.snapshot_id }}"
-          git push
+          AZ="${{ inputs.aws_region }}a"
+          cat > terraform.tfvars <<EOF
+          aws_region           = "${{ inputs.aws_region }}"
+          project_name         = "eks-bottlerocket"
+          environment          = "${{ inputs.environment }}"
+          vpc_cidr             = "${{ inputs.vpc_cidr }}"
+          azs                  = ["${AZ}"]
+          public_subnet_cidrs  = ["10.0.1.0/24"]
+          private_subnet_cidrs = []
+          instance_type        = "${{ inputs.instance_type }}"
+          container_images     = "${{ inputs.container_images }}"
+          tags = {
+            system       = "k+"
+            map-migrated = "migDTX1AI6YIC"
+          }
+          EOF
+
+      - name: Terraform Destroy
+        working-directory: terraform
+        run: |
+          terraform init
+          terraform destroy -auto-approve
