@@ -22,8 +22,9 @@ spec:
                   operator: "In"
                   values: ["no-prefetch-mng"]
       containers:
-        - name: inflate-amazon-linux
-          image: chucthien03/klb-profile-hub:v1 
+        - name: inflate-no-prefetch
+          image: chucthien03/banking-demo:2
+          command: ["sleep", "infinity"]
           resources:
             requests:
               cpu: 1
@@ -53,8 +54,9 @@ spec:
                   operator: "In"
                   values: ["prefetch-mng"]
       containers:
-        - name: inflate-bottlerocket
-          image: chucthien03/klb-profile-hub:v1 
+        - name: inflate-prefetch
+          image: chucthien03/banking-demo:2
+          command: ["sleep", "infinity"]
           resources:
             requests:
               cpu: 1
