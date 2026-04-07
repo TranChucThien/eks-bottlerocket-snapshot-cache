@@ -6,6 +6,34 @@ Thử nghiệm đánh giá hiệu quả của việc cache container image vào 
 
 [Bottlerocket](https://github.com/bottlerocket-os/bottlerocket) sử dụng 2 volume: OS volume và data volume. Data volume lưu trữ container images. Giải pháp này tạo EBS snapshot từ data volume đã pull sẵn image, sau đó gắn snapshot vào node mới → node khởi động đã có sẵn image mà không cần pull từ registry.
 
+## Kiến trúc giải pháp
+
+![Bottlerocket EBS Snapshot Cache Architecture](pictures/bottlerocket_ebs_snapshot_cache_architecture.svg)
+
+### Quy trình tạo snapshot (tự động qua GitHub Actions)
+
+Workflow `create-snapshot.yml` gồm 2 jobs:
+
+**Job 1 — create-snapshot:**
+1. Terraform tạo hạ tầng tạm thời (VPC, Subnet, EC2 Bottlerocket)
+2. EC2 Bottlerocket khởi động và pull các container images được chỉ định
+3. Tạo EBS snapshot từ data volume (`/dev/xvdb`)
+4. Terraform destroy xóa toàn bộ hạ tầng tạm, chỉ giữ lại snapshot
+
+**Job 2 — update-config:**
+1. Cập nhật `snapshotID` mới vào `eks-clusterconfig.yaml`
+2. Auto commit & push về repo
+
+### Tham số workflow
+
+| Tham số | Mô tả | Mặc định |
+|---|---|---|
+| `aws_region` | AWS Region | `ap-northeast-1` |
+| `environment` | Môi trường (dev/staging/prod) | `dev` |
+| `container_images` | Danh sách images cần cache (phân cách bằng dấu phẩy) | `public.ecr.aws/eks-distro/kubernetes/pause:3.2` |
+| `instance_type` | Loại EC2 tạm thời | `t2.small` |
+| `vpc_cidr` | CIDR cho VPC tạm | `10.0.0.0/16` |
+
 ## Kịch bản kiểm thử
 
 Triển khai 2 node group trên cùng một EKS cluster:
